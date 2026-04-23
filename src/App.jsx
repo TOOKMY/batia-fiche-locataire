@@ -698,6 +698,48 @@ export default function App() {
   const [etat,    setEtat]    = useState("");
   const [synth,   setSynth]   = useState({margeCible:"20"});
 
+  // ── Sauvegarde / Chargement ──────────────────────────────────────────────
+  const handleSave = () => {
+    const data = { ident, check, lots, etat, synth };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `BATIA_${(ident.nom || "dossier").replace(/\s+/g, "_")}_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleLoad = () => {
+    const input = document.createElement("input");
+    input.type  = "file";
+    input.accept = ".json";
+    input.onchange = e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (data.ident)  setIdent(data.ident);
+          if (data.check)  setCheck(data.check);
+          if (data.lots)   setLots(data.lots);
+          if (data.etat)   setEtat(data.etat);
+          if (data.synth)  setSynth(data.synth);
+          setTab("ident");
+        } catch { alert("Fichier invalide — vérifiez que c'est bien un fichier BATIA .json"); }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
+  const handleNew = () => {
+    if (window.confirm("Créer un nouveau dossier ? Les données non sauvegardées seront perdues.")) {
+      setIdent({}); setCheck({}); setLots([]); setEtat(""); setSynth({ margeCible: "20" }); setTab("ident");
+    }
+  };
+
   return (
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"'DM Sans', sans-serif",color:C.text}}>
       <style>{`
@@ -715,11 +757,21 @@ export default function App() {
             <span style={{color:"#fff",fontFamily:"'Playfair Display', serif",fontSize:15,fontWeight:700}}>{ident.nom||"Nouveau dossier"}</span>
             {ident.prixAffiche&&<span style={{color:"#888",fontSize:12}}>· {parseFloat(ident.prixAffiche).toLocaleString("fr-FR")}€ affiché</span>}
           </div>
-          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {check.decision&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:12,background:check.decision==="GO"?"#1b5e20":check.decision==="NO GO"?"#b71c1c":"#e65100",color:"#fff"}}>{check.decision}</span>}
             {[{ok:!!(ident.nom&&ident.adresse)},{ok:!!check.decision},{ok:lots.length>0&&lots.some(l=>l.statut)},{ok:!!(synth.acq&&synth.travaux)}].map(({ok},i)=>(
               <span key={i} style={{width:8,height:8,borderRadius:"50%",background:ok?"#4caf50":"rgba(255,255,255,0.2)"}}/>
             ))}
+            <div style={{width:1,height:20,background:"rgba(255,255,255,0.15)",margin:"0 4px"}}/>
+            <button onClick={handleLoad} title="Charger un dossier" style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#ccc",cursor:"pointer",borderRadius:6,padding:"5px 10px",fontSize:12,fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}}>
+              📂 Charger
+            </button>
+            <button onClick={handleSave} title="Sauvegarder le dossier" style={{background:C.gold,border:"none",color:C.dark,cursor:"pointer",borderRadius:6,padding:"5px 10px",fontSize:12,fontWeight:700,fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}}>
+              💾 Sauvegarder
+            </button>
+            <button onClick={handleNew} title="Nouveau dossier" style={{background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.15)",color:"#aaa",cursor:"pointer",borderRadius:6,padding:"5px 10px",fontSize:12,fontFamily:"inherit"}}>
+              + Nouveau
+            </button>
           </div>
         </div>
       </div>
