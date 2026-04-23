@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
+const STORAGE_KEY = "batia_projets_v1";
+
 const RISK_COLORS = {
   libre:   { bg:"#e8f5e9", text:"#2e7d32", label:"LIBRE",   dot:"#43a047" },
   faible:  { bg:"#e3f2fd", text:"#1565c0", label:"FAIBLE",  dot:"#1e88e5" },
@@ -56,6 +58,15 @@ const ETATS_BIEN = [
 const STATUTS_DOSSIER = ["En cours","Visite prévue","Offre faite","Abandonné","Acquis","Vendu"];
 const TYPES_BIEN      = ["Immeuble","Appartement","Maison","Plateau brut","Local commercial","Terrain"];
 const SOURCES         = ["Agent immobilier","LeBonCoin","PAP","SeLoger","Notaire","Direct vendeur","Bouche à oreille","Autre"];
+
+const STATUT_COLORS = {
+  "En cours":     { bg:"#e3f2fd", text:"#1565c0" },
+  "Visite prévue":{ bg:"#fff8e1", text:"#e65100" },
+  "Offre faite":  { bg:"#f3e5f5", text:"#6a1b9a" },
+  "Abandonné":    { bg:"#fce4ec", text:"#b71c1c" },
+  "Acquis":       { bg:"#e8f5e9", text:"#2e7d32" },
+  "Vendu":        { bg:"#e8f5e9", text:"#1b5e20" },
+};
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function computeRisk(lot) {
@@ -115,6 +126,23 @@ function provisionNum(lot) {
 function fmt(n) {
   if (n===null||n===undefined||isNaN(n)) return "—";
   return Math.round(n).toLocaleString("fr-FR")+"€";
+}
+function newProjet() {
+  return {
+    id: Date.now().toString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ident: {}, check: {}, lots: [], etat: "", synth: { margeCible:"20" }
+  };
+}
+
+// ─── STORAGE ─────────────────────────────────────────────────────────────────
+function loadProjets() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]"); }
+  catch { return []; }
+}
+function saveProjets(projets) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(projets));
 }
 
 // ─── RESPONSIVE HOOK ─────────────────────────────────────────────────────────
@@ -177,7 +205,104 @@ function RiskBadge({ risk }) {
   );
 }
 
-// ─── MODULE 01 ───────────────────────────────────────────────────────────────
+// ─── ÉCRAN LISTE PROJETS ──────────────────────────────────────────────────────
+function EcranProjets({ projets, onOpen, onCreate, onDelete, onImport, isMobile }) {
+  const handleImport = () => {
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = ".json";
+    input.onchange = e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (data.ident !== undefined) onImport(data);
+          else alert("Fichier invalide");
+        } catch { alert("Fichier invalide"); }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg, fontFamily:"'DM Sans', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap'); *{box-sizing:border-box;}`}</style>
+
+      {/* Header */}
+      <div style={{ background:C.dark, padding:`0 ${isMobile?14:32}px` }}>
+        <div style={{ maxWidth:980, margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"space-between", height:56 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <span style={{ background:C.gold, color:C.dark, fontWeight:800, fontSize:12, padding:"4px 12px", borderRadius:4, letterSpacing:2 }}>BATIA</span>
+            <span style={{ color:"#fff", fontFamily:"'Playfair Display', serif", fontSize:16, fontWeight:700 }}>Mes dossiers</span>
+          </div>
+          <button onClick={handleImport} style={{ background:"rgba(255,255,255,0.1)", border:"none", color:"#ccc", cursor:"pointer", borderRadius:6, padding:"6px 12px", fontSize:12, fontFamily:"inherit" }}>
+            📂 Importer
+          </button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth:980, margin:"0 auto", padding:isMobile?"16px 14px":"28px 32px" }}>
+
+        {/* Bouton nouveau dossier */}
+        <button onClick={onCreate} style={{
+          width:"100%", padding:"16px", background:C.dark, border:"none", borderRadius:12,
+          cursor:"pointer", color:C.gold, fontSize:15, fontWeight:700, fontFamily:"inherit",
+          marginBottom:20, display:"flex", alignItems:"center", justifyContent:"center", gap:10,
+        }}>
+          <span style={{ fontSize:20 }}>+</span> Nouveau dossier
+        </button>
+
+        {/* Liste projets */}
+        {projets.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"60px 20px", color:C.muted }}>
+            <div style={{ fontSize:48, marginBottom:16 }}>🏢</div>
+            <div style={{ fontSize:16, fontWeight:600, marginBottom:8 }}>Aucun dossier</div>
+            <div style={{ fontSize:14 }}>Crée ton premier dossier ou importe un fichier JSON existant</div>
+          </div>
+        ) : (
+          projets.slice().reverse().map(p => {
+            const sc = STATUT_COLORS[p.ident?.statut]||{ bg:"#f5f3ee", text:C.muted };
+            const updatedAt = new Date(p.updatedAt).toLocaleDateString("fr-FR");
+            return (
+              <div key={p.id} onClick={()=>onOpen(p.id)} style={{
+                background:C.card, border:`1px solid ${C.border}`, borderRadius:12,
+                padding:"16px", marginBottom:12, cursor:"pointer", transition:"all 0.15s",
+              }}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=C.dark}
+                onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}
+              >
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:15, fontWeight:700, color:C.dark, fontFamily:"'Playfair Display', serif", marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {p.ident?.nom||"Sans titre"}
+                    </div>
+                    <div style={{ fontSize:13, color:C.muted }}>
+                      {p.ident?.adresse||"Adresse non renseignée"}
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6, flexShrink:0 }}>
+                    {p.ident?.statut&&(
+                      <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:12, background:sc.bg, color:sc.text }}>
+                        {p.ident.statut}
+                      </span>
+                    )}
+                    <span style={{ fontSize:11, color:C.muted }}>{updatedAt}</span>
+                    <button onClick={e=>{ e.stopPropagation(); if(window.confirm(`Supprimer "${p.ident?.nom||"ce dossier"}" ?`)) onDelete(p.id); }} style={{ background:"transparent", border:"none", color:"#ccc", cursor:"pointer", fontSize:16, padding:"2px 4px" }}>🗑</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── MODULES 01-04 (identiques v3 mais avec isMobile prop) ───────────────────
+
 function ModuleIdentification({ data, onChange, isMobile }) {
   const f = (k,v) => onChange({...data,[k]:v});
   return (
@@ -217,7 +342,6 @@ function ModuleIdentification({ data, onChange, isMobile }) {
           <Field label="Éléments dossier (Drive)"><input value={data.dossier||""} onChange={e=>f("dossier",e.target.value)} placeholder="https://drive.google.com/..." style={inp}/></Field>
         </Grid>
       </div>
-
       <div style={cardStyle()}>
         <h3 style={sH3}>Contexte vendeur</h3>
         <Grid cols={2} mob={1} isMobile={isMobile}>
@@ -233,11 +357,8 @@ function ModuleIdentification({ data, onChange, isMobile }) {
           </Field>
           <Field label="Si oui, montant ?"><input value={data.montantOffre||""} onChange={e=>f("montantOffre",e.target.value)} placeholder="ex: 480 000€" style={inp}/></Field>
         </Grid>
-        <Field label="Remarques">
-          <textarea value={data.remarques||""} onChange={e=>f("remarques",e.target.value)} placeholder="Observations..." style={{...inp,height:80,resize:"vertical"}}/>
-        </Field>
+        <Field label="Remarques"><textarea value={data.remarques||""} onChange={e=>f("remarques",e.target.value)} placeholder="Observations..." style={{...inp,height:80,resize:"vertical"}}/></Field>
       </div>
-
       <div style={cardStyle()}>
         <h3 style={sH3}>Réglementaire & Risques adresse</h3>
         <Grid cols={3} mob={1} isMobile={isMobile}>
@@ -280,7 +401,6 @@ function ModuleIdentification({ data, onChange, isMobile }) {
   );
 }
 
-// ─── MODULE 02 ───────────────────────────────────────────────────────────────
 function ModuleChecklist({ data, onChange, isMobile }) {
   const f = (k,v) => onChange({...data,[k]:v});
   const setCheck = (section,key,val) => f(section,{...data[section],[key]:val});
@@ -314,19 +434,16 @@ function ModuleChecklist({ data, onChange, isMobile }) {
         <h3 style={{...sH3,color:"#fff",borderColor:"rgba(255,255,255,0.15)"}}>④ Décision à chaud</h3>
         <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
           {["GO","GO sous réserve","NO GO"].map(d=>(
-            <button key={d} onClick={()=>f("decision",d)} style={{
-              flex:1, minWidth:100, padding:"12px 8px", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:14, fontFamily:"inherit",
-              background:data.decision===d?(d==="GO"?"#1b5e20":d==="NO GO"?"#b71c1c":"#e65100"):"rgba(255,255,255,0.1)",
-              border:data.decision===d?"none":`1px solid rgba(255,255,255,0.2)`,
-              color:data.decision===d?"#fff":"#888",
-            }}>{d==="GO"?"✅":d==="NO GO"?"❌":"⚠️"} {d}</button>
+            <button key={d} onClick={()=>f("decision",d)} style={{flex:1,minWidth:100,padding:"12px 8px",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:14,fontFamily:"inherit",background:data.decision===d?(d==="GO"?"#1b5e20":d==="NO GO"?"#b71c1c":"#e65100"):"rgba(255,255,255,0.1)",border:data.decision===d?"none":`1px solid rgba(255,255,255,0.2)`,color:data.decision===d?"#fff":"#888"}}>
+              {d==="GO"?"✅":d==="NO GO"?"❌":"⚠️"} {d}
+            </button>
           ))}
         </div>
         <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:12}}>
           <input type="checkbox" checked={data.pointBloquant||false} onChange={e=>f("pointBloquant",e.target.checked)} style={{accentColor:C.gold,width:18,height:18}}/>
           <span style={{color:data.pointBloquant?"#ff6b6b":"#aaa",fontWeight:600,fontSize:14}}>Point bloquant identifié</span>
         </label>
-        {data.pointBloquant&&<textarea value={data.pointBloquantDetail||""} onChange={e=>f("pointBloquantDetail",e.target.value)} placeholder="Détail du point bloquant..." style={{...inp,height:70,resize:"vertical",background:"rgba(255,255,255,0.08)",borderColor:"#ff6b6b",color:"#fff"}}/>}
+        {data.pointBloquant&&<textarea value={data.pointBloquantDetail||""} onChange={e=>f("pointBloquantDetail",e.target.value)} placeholder="Détail..." style={{...inp,height:70,resize:"vertical",background:"rgba(255,255,255,0.08)",borderColor:"#ff6b6b",color:"#fff"}}/>}
         <div style={{marginTop:12}}>
           <textarea value={data.decisionMotif||""} onChange={e=>f("decisionMotif",e.target.value)} placeholder="Motif de la décision..." style={{...inp,height:60,resize:"vertical",background:"rgba(255,255,255,0.08)",borderColor:"rgba(255,255,255,0.2)",color:"#fff"}}/>
         </div>
@@ -335,7 +452,6 @@ function ModuleChecklist({ data, onChange, isMobile }) {
   );
 }
 
-// ─── MODULE 03 ───────────────────────────────────────────────────────────────
 function EtatSelector({ value, onChange, surface, label="État général" }) {
   const etat = ETATS_BIEN.find(e=>e.key===value);
   const s = parseFloat(surface)||0;
@@ -389,7 +505,6 @@ function LotCard({ lot, index, onUpdate, onDelete, isMobile }) {
             </Field>
           </Grid>
           <EtatSelector value={lot.etatLot} onChange={v=>f("etatLot",v)} surface={lot.surface} label="État général du lot"/>
-
           {lot.statut==="occupe"&&(
             <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
               <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:12,fontSize:14}}>
@@ -421,7 +536,6 @@ function LotCard({ lot, index, onUpdate, onDelete, isMobile }) {
               {lot.statutInconnu&&<Field label="Action requise"><textarea value={lot.actionInconnu||""} onChange={e=>f("actionInconnu",e.target.value)} placeholder="ex: Contacter Foncia avant signing" style={{...inp,height:50,resize:"vertical"}}/></Field>}
             </div>
           )}
-
           {lot.statut&&(
             <div style={{marginTop:12,padding:"12px",background:rc.bg,borderRadius:8}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
@@ -436,7 +550,6 @@ function LotCard({ lot, index, onUpdate, onDelete, isMobile }) {
               )}
             </div>
           )}
-
           <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
             <Grid cols={2} mob={2} isMobile={isMobile}>
               <Field label="Prix revente estimé (€)"><input value={lot.prixRevente||""} onChange={e=>f("prixRevente",e.target.value)} placeholder="90 000" style={inp} type="number"/></Field>
@@ -468,7 +581,7 @@ function ModuleLots({ lots, onChange, etatGlobal, onEtatGlobal, surfaceGlobale, 
       <div style={cardStyle()}>
         <h3 style={sH3}>État général — {labelBien.toLowerCase()}</h3>
         <EtatSelector value={etatGlobal} onChange={onEtatGlobal} surface={surfaceGlobale} label={`État global (${labelBien.toLowerCase()})`}/>
-        <div style={{marginTop:10,fontSize:12,color:C.muted,lineHeight:1.8}}>
+        <div style={{marginTop:10,fontSize:12,color:C.muted,lineHeight:1.9}}>
           {ETATS_BIEN.map(e=><div key={e.key} style={{color:etatGlobal===e.key?C.dark:C.muted,fontWeight:etatGlobal===e.key?700:400}}>{etatGlobal===e.key?"→ ":"· "}{e.label} : {e.key==="tout_faire"?"1 000–1 200":e.cout}€/m²</div>)}
         </div>
       </div>
@@ -498,129 +611,146 @@ function ModuleLots({ lots, onChange, etatGlobal, onEtatGlobal, surfaceGlobale, 
   );
 }
 
-// ─── MODULE 04 ───────────────────────────────────────────────────────────────
 function ModuleSynthese({ ident, lots, synth, onSynth, isMobile }) {
   const [copied, setCopied] = useState(false);
   const f = (k,v) => onSynth({...synth,[k]:v});
-  const surface   = parseFloat(ident.surface||0);
-  const caBase    = lots.reduce((acc,l)=>acc+(parseFloat(l.prixRevente)||0),0);
-  const caOpt     = caBase*1.05;
-  const caPess    = caBase*0.95;
-  const acq       = parseFloat(synth.acq||0);
-  const fdn       = acq*0.03;
-  const travaux   = parseFloat(synth.travaux||0);
-  const trPm2     = surface>0&&travaux>0?travaux/surface:null;
-  const totalProv = lots.reduce((acc,l)=>acc+provisionNum(l),0);
-  const cpt       = acq+fdn+travaux+totalProv;
-  const ff        = cpt*0.08;
-  const margeCible= parseFloat(synth.margeCible||20)/100;
-  function margeCalc(ca) {
-    if (!acq||!ca) return null;
-    const ben = ca-cpt-ff;
-    return { montant:ben, pct:cpt>0?(ben/cpt)*100:0 };
-  }
-  function prixVise(ca) {
+
+  const surface    = parseFloat(ident.surface||0);
+  const caBase     = lots.reduce((acc,l)=>acc+(parseFloat(l.prixRevente)||0),0);
+  const caOpt      = caBase*1.05;
+  const caPess     = caBase*0.95;
+  const totalProv  = lots.reduce((acc,l)=>acc+provisionNum(l),0);
+  const margeCible = parseFloat(synth.margeCible||20)/100;
+  const duree      = synth.duree||"12M";
+  const travaux    = parseFloat(synth.travaux||0);
+  const trPm2      = surface>0&&travaux>0?travaux/surface:null;
+
+  const FF_RATIOS = { "6M":0.063, "12M":0.09, "24M":0.155 };
+
+  // Prix d'acquisition visé : calculé depuis CA, marge cible et durée choisie
+  // CPT = (acqV*1.03 + trav + prov) * (1+ffR)
+  // ca  = CPT * (1+marge)  →  CPT = ca/(1+marge)
+  // acqV = (CPT/(1+ffR) - trav - prov) / 1.03
+  function prixVise(ca, dur) {
     if (!ca) return null;
-    const cptVise = ca/(1.08+margeCible);
-    return (cptVise-travaux-totalProv)/1.03;
+    const ffR  = FF_RATIOS[dur]||0.09;
+    const cpt  = ca / (1 + margeCible);
+    const acqV = (cpt / (1 + ffR) - travaux - totalProv) / 1.03;
+    return acqV > 0 ? acqV : null;
   }
+
+  // Décomposition complète depuis un prix d'achat
+  function calcFromAcq(acqV, ca, dur) {
+    if (!acqV||!ca) return null;
+    const ffR    = FF_RATIOS[dur]||0.09;
+    const fdn    = acqV*0.03;
+    const cptB   = acqV+fdn+travaux+totalProv;
+    const ff     = cptB*ffR;
+    const cpt    = cptB+ff;
+    const ben    = ca-cpt;
+    return { fdn, cptBase:cptB, ff, cpt, montant:ben, pct:cpt>0?(ben/cpt)*100:0, apport:acqV*0.30, pret:acqV*0.70 };
+  }
+
   const scenarios = [
-    { label:"Pessimiste −5%", ca:caPess, color:C.danger  },
-    { label:"Neutre",         ca:caBase, color:C.text     },
-    { label:"Optimiste +5%",  ca:caOpt,  color:C.success  },
+    { label:"Pessimiste −5%", ca:caPess, color:"#ef9a9a" },
+    { label:"Neutre",          ca:caBase, color:C.gold     },
+    { label:"Optimiste +5%",   ca:caOpt,  color:"#a5d6a7" },
   ];
+
+  // Décomposition de référence : prix visé scénario neutre / durée choisie
+  const pvNeutre = prixVise(caBase, duree);
+  const refCalc  = pvNeutre ? calcFromAcq(pvNeutre, caBase, duree) : null;
+  const prixAffiche = parseFloat(ident.prixAffiche||0);
+
   const handleCopy = () => {
-    const m = margeCalc(caBase);
     const lines = [
       `📋 SYNTHÈSE BATIA — ${ident.nom||ident.adresse||"Dossier"}`,
       `🗓 ${new Date().toLocaleDateString("fr-FR")} · ${ident.adresse||""}`,
-      "─────────────────────────────",
-      `CA brut lots : ${fmt(caBase)}`,
-      `Acquisition : ${fmt(acq)} · FdN 3% : ${fmt(fdn)}`,
+      `Prix affiché : ${fmt(prixAffiche)} · CA brut lots : ${fmt(caBase)}`,
       `Travaux : ${fmt(travaux)}${trPm2?` (${Math.round(trPm2)}€/m²)`:""}`,
       `Provision éviction : ~${fmt(totalProv)}`,
-      `Frais financiers ~8% CPT : ${fmt(ff)}`,
-      `CPT total : ${fmt(cpt)}`,
+      `Durée : ${duree} · Marge cible : ${synth.margeCible||20}%`,
       "─────────────────────────────",
       ...scenarios.map(s=>{
-        const mv=margeCalc(s.ca);
-        const pv=prixVise(s.ca);
-        return `${s.label} · CA ${fmt(s.ca)} · Marge ${mv?mv.pct.toFixed(1)+"%":"NC"} · Acq. visé (${synth.margeCible||20}%) : ${pv&&pv>0?fmt(pv):"NC"}`;
+        const pv=prixVise(s.ca,duree);
+        const c=pv?calcFromAcq(pv,s.ca,duree):null;
+        return `${s.label} · CA ${fmt(s.ca)} · Acq. visée : ${pv?fmt(pv):"NC"} · Marge : ${c?c.pct.toFixed(1)+`% (${fmt(c.montant)})`:"NC"}`;
       }),
     ];
     navigator.clipboard.writeText(lines.join("\n")).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
   };
+
   return (
     <div>
-      <SectionTitle num="04" title="Synthèse financière" subtitle="Coût de revient, marge et prix d'acquisition cible"/>
+      <SectionTitle num="04" title="Synthèse financière" subtitle="Prix d'acquisition cible calculé depuis le CA et la marge visée"/>
+
+      {/* Paramètres */}
       <div style={cardStyle()}>
         <h3 style={sH3}>Paramètres</h3>
         <Grid cols={3} mob={1} isMobile={isMobile}>
-          <Field label="Coût d'acquisition (€)"><input value={synth.acq||""} onChange={e=>f("acq",e.target.value)} placeholder="400 000" style={inp} type="number"/></Field>
-          <Field label="Travaux estimés (€)"><input value={synth.travaux||""} onChange={e=>f("travaux",e.target.value)} placeholder="40 000" style={inp} type="number"/></Field>
+          <Field label="Travaux estimés (€)">
+            <input value={synth.travaux||""} onChange={e=>f("travaux",e.target.value)} placeholder="40 000" style={inp} type="number"/>
+          </Field>
           <Field label="Marge cible">
             <select value={synth.margeCible||"20"} onChange={e=>f("margeCible",e.target.value)} style={{...inp,cursor:"pointer"}}>
               <option value="20">20%</option><option value="25">25%</option><option value="30">30%</option>
             </select>
           </Field>
+          <Field label="Durée de portage">
+            <select value={duree} onChange={e=>f("duree",e.target.value)} style={{...inp,cursor:"pointer"}}>
+              <option value="6M">6 mois</option>
+              <option value="12M">12 mois</option>
+              <option value="24M">24 mois</option>
+            </select>
+          </Field>
         </Grid>
-        {trPm2&&<div style={{fontSize:12,color:C.muted,marginTop:4}}>Travaux : <strong style={{color:C.text}}>{Math.round(trPm2)}€/m²</strong> — {trPm2<300?"Rafraîchissement":trPm2<600?"Rénovation partielle":trPm2<900?"Rénovation lourde":"Tout à faire"}</div>}
+        {trPm2&&<div style={{fontSize:12,color:C.muted,marginTop:6}}>
+          Travaux : <strong style={{color:C.text}}>{Math.round(trPm2)}€/m²</strong> — {trPm2<300?"Rafraîchissement":trPm2<600?"Rénovation partielle":trPm2<900?"Rénovation lourde":"Tout à faire"}
+        </div>}
+        {prixAffiche>0&&pvNeutre&&(
+          <div style={{marginTop:8,padding:"10px 12px",background:"#F5F3EE",borderRadius:8,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+            <span style={{fontSize:13,color:C.muted}}>Prix affiché : <strong style={{color:C.text}}>{fmt(prixAffiche)}</strong></span>
+            <span style={{fontSize:13,color:C.muted}}>Prix visé neutre ({duree}) : <strong style={{color:pvNeutre<prixAffiche?C.success:C.danger}}>{fmt(pvNeutre)}</strong>
+              <span style={{fontSize:11,color:C.muted}}> ({(((pvNeutre-prixAffiche)/prixAffiche)*100).toFixed(1)}%)</span>
+            </span>
+          </div>
+        )}
         {caBase===0&&<div style={{marginTop:8,fontSize:12,color:C.muted}}>ℹ️ Renseigne les prix de revente dans l'onglet 03.</div>}
       </div>
-      {acq>0&&(
+
+      {/* Décomposition CPT — scénario neutre, durée choisie */}
+      {caBase>0&&pvNeutre&&refCalc&&(
         <div style={cardStyle()}>
-          <h3 style={sH3}>Décomposition CPT</h3>
+          <h3 style={sH3}>Décomposition CPT — neutre / {duree}</h3>
           {[
-            {label:"Acquisition",val:acq,pct:cpt>0?acq/cpt*100:0},
-            {label:"Frais notaire 3%",val:fdn,pct:cpt>0?fdn/cpt*100:0},
-            {label:"Travaux",val:travaux,pct:cpt>0?travaux/cpt*100:0},
-            {label:"Provision éviction",val:totalProv,pct:cpt>0?totalProv/cpt*100:0},
-            {label:"Frais financiers ~8% (12M)",val:ff,pct:cpt>0?ff/cpt*100:0},
+            { label:"Prix d'acquisition visé",   val:pvNeutre,        pct:refCalc.cptBase>0?pvNeutre/refCalc.cptBase*100:0 },
+            { label:"Frais notaire (~3%)",         val:refCalc.fdn,     pct:refCalc.cptBase>0?refCalc.fdn/refCalc.cptBase*100:0 },
+            { label:"Travaux",                     val:travaux,         pct:refCalc.cptBase>0?travaux/refCalc.cptBase*100:0 },
+            { label:"Provision éviction estimée",  val:totalProv,       pct:refCalc.cptBase>0?totalProv/refCalc.cptBase*100:0 },
           ].map(row=>(
-            <div key={row.label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`,fontSize:14}}>
+            <div key={row.label} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${C.border}`,fontSize:13}}>
               <span style={{color:C.muted}}>{row.label}</span>
-              <span style={{fontWeight:600}}>{fmt(row.val)} <span style={{fontSize:11,color:C.muted}}>({row.pct.toFixed(1)}%)</span></span>
+              <span style={{fontWeight:600,color:C.text}}>{fmt(row.val)} <span style={{fontSize:11,color:C.muted}}>({row.pct.toFixed(1)}%)</span></span>
             </div>
           ))}
-          <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0 0",fontSize:15,fontWeight:800,color:C.dark}}>
-            <span>CPT TOTAL</span><span>{fmt(cpt)}</span>
+          <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0 5px",fontSize:13,fontWeight:700,color:C.dark,borderBottom:`1px solid ${C.border}`}}>
+            <span>CPT hors frais financiers</span><span>{fmt(refCalc.cptBase)}</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0 5px",fontSize:13,color:C.muted,borderBottom:`2px solid ${C.dark}`}}>
+            <span>Frais financiers {duree} ({(FF_RATIOS[duree]*100).toFixed(1)}%)</span>
+            <span style={{fontWeight:600,color:C.text}}>{fmt(refCalc.ff)}</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",padding:"9px 0 0",fontSize:15,fontWeight:800,color:C.dark}}>
+            <span>CPT TOTAL {duree}</span><span>{fmt(refCalc.cpt)}</span>
+          </div>
+          <div style={{marginTop:10,padding:"10px 12px",background:"#F5F3EE",borderRadius:8,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div style={{fontSize:13}}><span style={{color:C.muted}}>Apport 30% : </span><strong>{fmt(refCalc.apport)}</strong></div>
+            <div style={{fontSize:13}}><span style={{color:C.muted}}>Prêt 70% : </span><strong>{fmt(refCalc.pret)}</strong></div>
           </div>
         </div>
       )}
-      {caBase>0&&(
-        <div style={cardStyle({background:C.dark})}>
-          <h3 style={{...sH3,color:"#fff",borderColor:"rgba(255,255,255,0.15)"}}>Matrice scénarios</h3>
-          {scenarios.map(s=>{
-            const m  = margeCalc(s.ca);
-            const pv = prixVise(s.ca);
-            const isGo   = m&&m.pct>=20;
-            const isWarn = m&&m.pct>=12&&m.pct<20;
-            return (
-              <div key={s.label} style={{marginBottom:12,padding:"12px",background:"rgba(255,255,255,0.06)",borderRadius:8}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                  <span style={{color:s.color,fontWeight:700,fontSize:14}}>{s.label}</span>
-                  <span style={{color:"#fff",fontWeight:600}}>{fmt(s.ca)}</span>
-                </div>
-                <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                  {m&&<span style={{background:isGo?"#1b5e20":isWarn?"#e65100":"#b71c1c",color:"#fff",padding:"2px 10px",borderRadius:12,fontSize:12,fontWeight:700}}>{m.pct.toFixed(1)}% · {fmt(m.montant)}</span>}
-                  {pv&&pv>0&&<span style={{color:C.gold,fontSize:12}}>Acq. visé : <strong>{fmt(pv)}</strong></span>}
-                </div>
-              </div>
-            );
-          })}
-          {acq>0&&caBase>0&&(()=>{
-            const m = margeCalc(caBase);
-            const g = m&&m.pct>=20?"GO":m&&m.pct>=12?"ATTENTION":"NO GO";
-            return (
-              <div style={{marginTop:8,textAlign:"center"}}>
-                <span style={{display:"inline-block",padding:"10px 28px",borderRadius:8,fontWeight:800,fontSize:18,letterSpacing:2,background:g==="GO"?"#1b5e20":g==="NO GO"?"#b71c1c":"#e65100",color:"#fff"}}>
-                  {g==="GO"?"✅":g==="NO GO"?"❌":"⚠️"} {g}
-                </span>
-              </div>
-            );
-          })()}
-        </div>
-      )}
+
+
       <button onClick={handleCopy} style={{width:"100%",padding:"14px",background:copied?"#e8f5e9":C.dark,border:"none",borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:700,color:copied?C.success:C.gold,fontFamily:"inherit",letterSpacing:1,marginTop:4,transition:"all 0.3s"}}>
         {copied?"✅ COPIÉ — COLLE DANS NOTION":"📋 COPIER LA SYNTHÈSE NOTION"}
       </button>
@@ -638,52 +768,81 @@ const TABS = [
 
 export default function App() {
   const isMobile = useIsMobile();
-  const [tab,   setTab]   = useState("ident");
-  const [ident, setIdent] = useState({});
-  const [check, setCheck] = useState({});
-  const [lots,  setLots]  = useState([]);
-  const [etat,  setEtat]  = useState("");
-  const [synth, setSynth] = useState({ margeCible:"20" });
+  const [projets,    setProjets]   = useState(() => loadProjets());
+  const [projetActif,setProjetActif] = useState(null); // id du projet ouvert
+  const [tab,        setTab]       = useState("ident");
+  const [saved,      setSaved]     = useState(false);
 
-  const handleSave = () => {
-    const data = { ident, check, lots, etat, synth };
-    const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+  // Projet courant
+  const projet = projets.find(p=>p.id===projetActif)||null;
+
+  // Auto-save toutes les 30s si projet ouvert
+  useEffect(() => {
+    if (!projetActif) return;
+    const t = setInterval(() => { saveProjets(projets); setSaved(true); setTimeout(()=>setSaved(false),1500); }, 30000);
+    return () => clearInterval(t);
+  }, [projetActif, projets]);
+
+  // Helpers mise à jour projet
+  const updateProjet = (patch) => {
+    setProjets(prev => prev.map(p => p.id===projetActif ? { ...p, ...patch, updatedAt:new Date().toISOString() } : p));
+  };
+  const saveNow = () => {
+    saveProjets(projets);
+    setSaved(true);
+    setTimeout(()=>setSaved(false),1500);
+  };
+
+  // Actions liste
+  const handleCreate = () => {
+    const p = newProjet();
+    const updated = [...projets, p];
+    setProjets(updated);
+    saveProjets(updated);
+    setProjetActif(p.id);
+    setTab("ident");
+  };
+  const handleOpen = (id) => { setProjetActif(id); setTab("ident"); };
+  const handleDelete = (id) => {
+    const updated = projets.filter(p=>p.id!==id);
+    setProjets(updated);
+    saveProjets(updated);
+  };
+  const handleImport = (data) => {
+    const p = { ...newProjet(), ...data, id:Date.now().toString(), updatedAt:new Date().toISOString() };
+    const updated = [...projets, p];
+    setProjets(updated);
+    saveProjets(updated);
+    setProjetActif(p.id);
+    setTab("ident");
+  };
+  const handleBack = () => { saveNow(); setProjetActif(null); };
+
+  const handleExport = () => {
+    if (!projet) return;
+    const { ident, check, lots, etat, synth } = projet;
+    const blob = new Blob([JSON.stringify({ident,check,lots,etat,synth},null,2)],{type:"application/json"});
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
-    a.href     = url;
-    a.download = `BATIA_${(ident.nom||"dossier").replace(/\s+/g,"_")}_${new Date().toISOString().slice(0,10)}.json`;
+    a.href=url;
+    a.download=`BATIA_${(projet.ident?.nom||"dossier").replace(/\s+/g,"_")}_${new Date().toISOString().slice(0,10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
-  const handleLoad = () => {
-    const input = document.createElement("input");
-    input.type  = "file";
-    input.accept= ".json";
-    input.onchange = e => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = ev => {
-        try {
-          const data = JSON.parse(ev.target.result);
-          if (data.ident) setIdent(data.ident);
-          if (data.check) setCheck(data.check);
-          if (data.lots)  setLots(data.lots);
-          if (data.etat)  setEtat(data.etat);
-          if (data.synth) setSynth(data.synth);
-          setTab("ident");
-        } catch { alert("Fichier invalide"); }
-      };
-      reader.readAsText(file);
-    };
-    input.click();
-  };
-  const handleNew = () => {
-    if (window.confirm("Nouveau dossier ? Les données non sauvegardées seront perdues.")) {
-      setIdent({}); setCheck({}); setLots([]); setEtat(""); setSynth({margeCible:"20"}); setTab("ident");
-    }
-  };
 
+  // ── ÉCRAN LISTE ───────────────────────────────────────────────────────────
+  if (!projetActif) {
+    return <EcranProjets projets={projets} onOpen={handleOpen} onCreate={handleCreate} onDelete={handleDelete} onImport={handleImport} isMobile={isMobile}/>;
+  }
+
+  // ── ÉCRAN DOSSIER ─────────────────────────────────────────────────────────
+  if (!projet) { setProjetActif(null); return null; }
+  const { ident, check, lots, etat, synth } = projet;
+  const setIdent = v => updateProjet({ident:v});
+  const setCheck = v => updateProjet({check:v});
+  const setLots  = v => updateProjet({lots:v});
+  const setEtat  = v => updateProjet({etat:v});
+  const setSynth = v => updateProjet({synth:v});
   const caBase = lots.reduce((acc,l)=>acc+(parseFloat(l.prixRevente)||0),0);
 
   return (
@@ -700,20 +859,18 @@ export default function App() {
       <div style={{background:C.dark,padding:`0 ${isMobile?14:32}px`}}>
         <div style={{maxWidth:980,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",height:54}}>
           <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-            <span style={{background:C.gold,color:C.dark,fontWeight:800,fontSize:11,padding:"3px 10px",borderRadius:4,letterSpacing:2,flexShrink:0}}>BATIA</span>
+            <button onClick={handleBack} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#ccc",cursor:"pointer",borderRadius:6,padding:"5px 10px",fontSize:13,fontFamily:"inherit",flexShrink:0}}>← Dossiers</button>
             <span style={{color:"#fff",fontFamily:"'Playfair Display', serif",fontSize:isMobile?13:15,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-              {ident.nom||"Nouveau dossier"}
+              {ident.nom||"Sans titre"}
             </span>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+            {saved&&<span style={{fontSize:11,color:"#4caf50"}}>✓ Sauvegardé</span>}
             {check.decision&&!isMobile&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:12,background:check.decision==="GO"?"#1b5e20":check.decision==="NO GO"?"#b71c1c":"#e65100",color:"#fff"}}>{check.decision}</span>}
-            <button onClick={handleLoad} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#ccc",cursor:"pointer",borderRadius:6,padding:"6px 10px",fontSize:12,fontFamily:"inherit"}}>
-              {isMobile?"📂":"📂 Charger"}
-            </button>
-            <button onClick={handleSave} style={{background:C.gold,border:"none",color:C.dark,cursor:"pointer",borderRadius:6,padding:"6px 10px",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>
+            <button onClick={saveNow} style={{background:C.gold,border:"none",color:C.dark,cursor:"pointer",borderRadius:6,padding:"6px 10px",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>
               {isMobile?"💾":"💾 Sauvegarder"}
             </button>
-            {!isMobile&&<button onClick={handleNew} style={{background:"rgba(255,255,255,0.08)",border:`1px solid rgba(255,255,255,0.15)`,color:"#aaa",cursor:"pointer",borderRadius:6,padding:"6px 10px",fontSize:12,fontFamily:"inherit"}}>+ Nouveau</button>}
+            {!isMobile&&<button onClick={handleExport} style={{background:"rgba(255,255,255,0.1)",border:"none",color:"#ccc",cursor:"pointer",borderRadius:6,padding:"6px 10px",fontSize:12,fontFamily:"inherit"}}>📤 Exporter</button>}
           </div>
         </div>
       </div>
@@ -743,13 +900,13 @@ export default function App() {
           {TABS.map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"10px 4px 12px",background:"transparent",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontFamily:"inherit"}}>
               <span style={{fontSize:20}}>{t.icon}</span>
-              <span style={{fontSize:10,fontWeight:tab===t.id?700:400,color:tab===t.id?C.dark:C.muted,letterSpacing:0.5}}>{t.full}</span>
+              <span style={{fontSize:10,fontWeight:tab===t.id?700:400,color:tab===t.id?C.dark:C.muted}}>{t.full}</span>
               {tab===t.id&&<span style={{width:20,height:2,background:C.dark,borderRadius:1}}/>}
             </button>
           ))}
-          <button onClick={handleNew} style={{flex:1,padding:"10px 4px 12px",background:"transparent",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontFamily:"inherit"}}>
-            <span style={{fontSize:20}}>➕</span>
-            <span style={{fontSize:10,color:C.muted}}>Nouveau</span>
+          <button onClick={()=>{saveNow();handleExport();}} style={{flex:1,padding:"10px 4px 12px",background:"transparent",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontFamily:"inherit"}}>
+            <span style={{fontSize:20}}>📤</span>
+            <span style={{fontSize:10,color:C.muted}}>Export</span>
           </button>
         </div>
       )}
