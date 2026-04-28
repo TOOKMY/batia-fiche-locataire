@@ -617,21 +617,17 @@ function ModuleSynthese({ ident, lots, synth, onSynth, isMobile }) {
 
   const surface    = parseFloat(ident.surface||0);
   const caBase     = lots.reduce((acc,l)=>acc+(parseFloat(l.prixRevente)||0),0);
-  const caOpt      = caBase*1.05;
-  const caPess     = caBase*0.95;
   const totalProv  = lots.reduce((acc,l)=>acc+provisionNum(l),0);
   const margeCible = parseFloat(synth.margeCible||20)/100;
   const duree      = synth.duree||"12M";
   const travaux    = parseFloat(synth.travaux||0);
   const trPm2      = surface>0&&travaux>0?travaux/surface:null;
+  const manuel     = synth.acqManuel||false;
+  const FF_RATIOS  = { "6M":0.063, "12M":0.09, "24M":0.155 };
+  const prixAffiche = parseFloat(ident.prixAffiche||0);
 
-  const FF_RATIOS = { "6M":0.063, "12M":0.09, "24M":0.155 };
-
-  // Prix d'acquisition visé : calculé depuis CA, marge cible et durée choisie
-  // CPT = (acqV*1.03 + trav + prov) * (1+ffR)
-  // ca  = CPT * (1+marge)  →  CPT = ca/(1+marge)
-  // acqV = (CPT/(1+ffR) - trav - prov) / 1.03
-  function prixVise(ca, dur) {
+  // Prix visé calculé automatiquement
+  function prixViseAuto(ca, dur) {
     if (!ca) return null;
     const ffR  = FF_RATIOS[dur]||0.09;
     const cpt  = ca / (1 + margeCible);
@@ -639,28 +635,21 @@ function ModuleSynthese({ ident, lots, synth, onSynth, isMobile }) {
     return acqV > 0 ? acqV : null;
   }
 
-  // Décomposition complète depuis un prix d'achat
-  function calcFromAcq(acqV, ca, dur) {
-    if (!acqV||!ca) return null;
-    const ffR    = FF_RATIOS[dur]||0.09;
-    const fdn    = acqV*0.03;
-    const cptB   = acqV+fdn+travaux+totalProv;
-    const ff     = cptB*ffR;
-    const cpt    = cptB+ff;
-    const ben    = ca-cpt;
+  // Décomposition depuis un prix d'achat
+  function calcFromAcq(acqV) {
+    if (!acqV) return null;
+    const ffR  = FF_RATIOS[duree]||0.09;
+    const fdn  = acqV*0.03;
+    const cptB = acqV+fdn+travaux+totalProv;
+    const ff   = cptB*ffR;
+    const cpt  = cptB+ff;
+    const ben  = caBase-cpt;
     return { fdn, cptBase:cptB, ff, cpt, montant:ben, pct:cpt>0?(ben/cpt)*100:0, apport:acqV*0.30, pret:acqV*0.70 };
   }
 
-  const scenarios = [
-    { label:"Pessimiste −5%", ca:caPess, color:"#ef9a9a" },
-    { label:"Neutre",          ca:caBase, color:C.gold     },
-    { label:"Optimiste +5%",   ca:caOpt,  color:"#a5d6a7" },
-  ];
-
-  // Décomposition de référence : prix visé scénario neutre / durée choisie
-  const pvNeutre = prixVise(caBase, duree);
-  const refCalc  = pvNeutre ? calcFromAcq(pvNeutre, caBase, duree) : null;
-  const prixAffiche = parseFloat(ident.prixAffiche||0);
+  const pvAuto  = prixViseAuto(caBase, duree);
+  const acqVal  = manuel ? parseFloat(synth.acqManuelVal||0) : (pvAuto||0);
+  const calc    = acqVal>0 ? calcFromAcq(acqVal) : null;
 
   const handleCopy = () => {
     const lines = [
@@ -671,12 +660,12 @@ function ModuleSynthese({ ident, lots, synth, onSynth, isMobile }) {
       `Provision éviction : ~${fmt(totalProv)}`,
       `Durée : ${duree} · Marge cible : ${synth.margeCible||20}%`,
       "─────────────────────────────",
-      ...scenarios.map(s=>{
-        const pv=prixVise(s.ca,duree);
-        const c=pv?calcFromAcq(pv,s.ca,duree):null;
-        return `${s.label} · CA ${fmt(s.ca)} · Acq. visée : ${pv?fmt(pv):"NC"} · Marge : ${c?c.pct.toFixed(1)+`% (${fmt(c.montant)})`:"NC"}`;
-      }),
-    ];
+      `Prix d'acquisition ${manuel?"(manuel)":"(calculé)"} : ${fmt(acqVal)}`,
+      calc?`FdN 3% : ${fmt(calc.fdn)} · Travaux : ${fmt(travaux)} · Provision : ${fmt(totalProv)}`:"",
+      calc?`CPT hors FF : ${fmt(calc.cptBase)} · FF ${duree} : ${fmt(calc.ff)} · CPT total : ${fmt(calc.cpt)}`:"",
+      calc?`CA brut : ${fmt(caBase)} · Marge nette : ${fmt(calc.montant)} (${calc.pct.toFixed(1)}%)`:"",
+      calc?`Apport 30% : ${fmt(calc.apport)} · Prêt 70% : ${fmt(calc.pret)}`:"",
+    ].filter(Boolean);
     navigator.clipboard.writeText(lines.join("\n")).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
   };
 
@@ -707,26 +696,62 @@ function ModuleSynthese({ ident, lots, synth, onSynth, isMobile }) {
         {trPm2&&<div style={{fontSize:12,color:C.muted,marginTop:6}}>
           Travaux : <strong style={{color:C.text}}>{Math.round(trPm2)}€/m²</strong> — {trPm2<300?"Rafraîchissement":trPm2<600?"Rénovation partielle":trPm2<900?"Rénovation lourde":"Tout à faire"}
         </div>}
-        {prixAffiche>0&&pvNeutre&&(
-          <div style={{marginTop:8,padding:"10px 12px",background:"#F5F3EE",borderRadius:8,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-            <span style={{fontSize:13,color:C.muted}}>Prix affiché : <strong style={{color:C.text}}>{fmt(prixAffiche)}</strong></span>
-            <span style={{fontSize:13,color:C.muted}}>Prix visé neutre ({duree}) : <strong style={{color:pvNeutre<prixAffiche?C.success:C.danger}}>{fmt(pvNeutre)}</strong>
-              <span style={{fontSize:11,color:C.muted}}> ({(((pvNeutre-prixAffiche)/prixAffiche)*100).toFixed(1)}%)</span>
-            </span>
-          </div>
-        )}
         {caBase===0&&<div style={{marginTop:8,fontSize:12,color:C.muted}}>ℹ️ Renseigne les prix de revente dans l'onglet 03.</div>}
       </div>
 
-      {/* Décomposition CPT — scénario neutre, durée choisie */}
-      {caBase>0&&pvNeutre&&refCalc&&(
+      {/* Prix d'acquisition */}
+      <div style={cardStyle()}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <h3 style={{...sH3,margin:0,borderBottom:"none",paddingBottom:0}}>Prix d'acquisition</h3>
+          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13,color:C.muted}}>
+            <input type="checkbox" checked={manuel} onChange={e=>f("acqManuel",e.target.checked)} style={{accentColor:C.dark,width:16,height:16}}/>
+            Saisir manuellement
+          </label>
+        </div>
+
+        {!manuel ? (
+          // Figé — calculé automatiquement
+          <div style={{padding:"14px 16px",background:"#F5F3EE",borderRadius:8,border:`1px solid ${C.border}`}}>
+            <div style={{fontSize:11,color:C.muted,letterSpacing:1,marginBottom:6,textTransform:"uppercase"}}>Calculé automatiquement</div>
+            <div style={{fontSize:24,fontWeight:800,color:C.dark,fontFamily:"'Playfair Display', serif"}}>
+              {pvAuto ? fmt(pvAuto) : caBase===0 ? "— (renseigne le CA)" : "—"}
+            </div>
+            {prixAffiche>0&&pvAuto&&(
+              <div style={{marginTop:6,fontSize:12,color:C.muted}}>
+                Écart vs. prix affiché : <strong style={{color:pvAuto<prixAffiche?C.success:C.danger}}>
+                  {fmt(pvAuto-prixAffiche)} ({(((pvAuto-prixAffiche)/prixAffiche)*100).toFixed(1)}%)
+                </strong>
+              </div>
+            )}
+          </div>
+        ) : (
+          // Manuel — saisie libre
+          <div>
+            <input value={synth.acqManuelVal||""} onChange={e=>f("acqManuelVal",e.target.value)}
+              placeholder="ex: 400 000" style={{...inp,fontSize:18,fontWeight:700}} type="number"/>
+            {prixAffiche>0&&synth.acqManuelVal&&(
+              <div style={{marginTop:6,fontSize:12,color:C.muted}}>
+                Écart vs. prix affiché : <strong style={{color:parseFloat(synth.acqManuelVal)<prixAffiche?C.success:C.danger}}>
+                  {fmt(parseFloat(synth.acqManuelVal)-prixAffiche)} ({(((parseFloat(synth.acqManuelVal)-prixAffiche)/prixAffiche)*100).toFixed(1)}%)
+                </strong>
+              </div>
+            )}
+            {pvAuto&&<div style={{marginTop:4,fontSize:12,color:C.muted}}>
+              Prix calculé auto : <strong style={{color:C.text}}>{fmt(pvAuto)}</strong>
+            </div>}
+          </div>
+        )}
+      </div>
+
+      {/* Décomposition CPT + synthèse */}
+      {acqVal>0&&calc&&(
         <div style={cardStyle()}>
-          <h3 style={sH3}>Décomposition CPT — neutre / {duree}</h3>
+          <h3 style={sH3}>Décomposition CPT — {duree}</h3>
           {[
-            { label:"Prix d'acquisition visé",   val:pvNeutre,        pct:refCalc.cptBase>0?pvNeutre/refCalc.cptBase*100:0 },
-            { label:"Frais notaire (~3%)",         val:refCalc.fdn,     pct:refCalc.cptBase>0?refCalc.fdn/refCalc.cptBase*100:0 },
-            { label:"Travaux",                     val:travaux,         pct:refCalc.cptBase>0?travaux/refCalc.cptBase*100:0 },
-            { label:"Provision éviction estimée",  val:totalProv,       pct:refCalc.cptBase>0?totalProv/refCalc.cptBase*100:0 },
+            { label:"Prix d'acquisition",          val:acqVal,        pct:calc.cptBase>0?acqVal/calc.cptBase*100:0 },
+            { label:"Frais notaire (~3%)",          val:calc.fdn,      pct:calc.cptBase>0?calc.fdn/calc.cptBase*100:0 },
+            { label:"Travaux",                      val:travaux,       pct:calc.cptBase>0?travaux/calc.cptBase*100:0 },
+            { label:"Provision éviction estimée",   val:totalProv,     pct:calc.cptBase>0?totalProv/calc.cptBase*100:0 },
           ].map(row=>(
             <div key={row.label} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${C.border}`,fontSize:13}}>
               <span style={{color:C.muted}}>{row.label}</span>
@@ -734,22 +759,40 @@ function ModuleSynthese({ ident, lots, synth, onSynth, isMobile }) {
             </div>
           ))}
           <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0 5px",fontSize:13,fontWeight:700,color:C.dark,borderBottom:`1px solid ${C.border}`}}>
-            <span>CPT hors frais financiers</span><span>{fmt(refCalc.cptBase)}</span>
+            <span>CPT hors frais financiers</span><span>{fmt(calc.cptBase)}</span>
           </div>
           <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0 5px",fontSize:13,color:C.muted,borderBottom:`2px solid ${C.dark}`}}>
             <span>Frais financiers {duree} ({(FF_RATIOS[duree]*100).toFixed(1)}%)</span>
-            <span style={{fontWeight:600,color:C.text}}>{fmt(refCalc.ff)}</span>
+            <span style={{fontWeight:600,color:C.text}}>{fmt(calc.ff)}</span>
           </div>
           <div style={{display:"flex",justifyContent:"space-between",padding:"9px 0 0",fontSize:15,fontWeight:800,color:C.dark}}>
-            <span>CPT TOTAL {duree}</span><span>{fmt(refCalc.cpt)}</span>
+            <span>CPT TOTAL {duree}</span><span>{fmt(calc.cpt)}</span>
           </div>
-          <div style={{marginTop:10,padding:"10px 12px",background:"#F5F3EE",borderRadius:8,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <div style={{fontSize:13}}><span style={{color:C.muted}}>Apport 30% : </span><strong>{fmt(refCalc.apport)}</strong></div>
-            <div style={{fontSize:13}}><span style={{color:C.muted}}>Prêt 70% : </span><strong>{fmt(refCalc.pret)}</strong></div>
+
+          {/* Synthèse finale */}
+          <div style={{marginTop:10,padding:"14px",background:"#1C1C2E",borderRadius:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:"1px solid rgba(255,255,255,0.1)",marginBottom:8}}>
+              <span style={{fontSize:13,color:"rgba(255,255,255,0.5)"}}>CA brut lots</span>
+              <span style={{fontSize:13,fontWeight:700,color:"#fff"}}>{fmt(caBase)}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:15,fontWeight:700,color:"rgba(255,255,255,0.8)"}}>Marge nette</span>
+              <div style={{textAlign:"right"}}>
+                <span style={{fontSize:20,fontWeight:800,color:calc.pct>=20?C.success:calc.pct>=12?"#fb8c00":C.danger}}>
+                  {fmt(calc.montant)}
+                </span>
+                <span style={{fontSize:14,fontWeight:700,color:calc.pct>=20?C.success:calc.pct>=12?"#fb8c00":C.danger,marginLeft:8}}>
+                  ({calc.pct.toFixed(1)}%)
+                </span>
+              </div>
+            </div>
+            <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,0.1)",display:"flex",gap:16}}>
+              <span style={{fontSize:12,color:"rgba(255,255,255,0.4)"}}>Apport 30% : <strong style={{color:"rgba(255,255,255,0.7)"}}>{fmt(calc.apport)}</strong></span>
+              <span style={{fontSize:12,color:"rgba(255,255,255,0.4)"}}>Prêt 70% : <strong style={{color:"rgba(255,255,255,0.7)"}}>{fmt(calc.pret)}</strong></span>
+            </div>
           </div>
         </div>
       )}
-
 
       <button onClick={handleCopy} style={{width:"100%",padding:"14px",background:copied?"#e8f5e9":C.dark,border:"none",borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:700,color:copied?C.success:C.gold,fontFamily:"inherit",letterSpacing:1,marginTop:4,transition:"all 0.3s"}}>
         {copied?"✅ COPIÉ — COLLE DANS NOTION":"📋 COPIER LA SYNTHÈSE NOTION"}
