@@ -136,6 +136,93 @@ function newProjet() {
   };
 }
 
+
+// ─── GOOGLE DRIVE CONFIG ─────────────────────────────────────────────────────
+const GOOGLE_CLIENT_ID = "337253556160-e4d5uvsfogdj1fj11e2e68lndaotacjs.apps.googleusercontent.com";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+const BATIA_FOLDER = "BATIA-App";
+
+// Load Google Identity Services script
+function loadGoogleScript() {
+  return new Promise(resolve => {
+    if (window.google?.accounts) { resolve(); return; }
+    const s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client";
+    s.onload = resolve;
+    document.head.appendChild(s);
+  });
+}
+
+// Get or create BATIA-App folder in Drive
+async function getOrCreateFolder(token) {
+  const search = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=name='${BATIA_FOLDER}'+and+mimeType='application/vnd.google-apps.folder'+and+trashed=false`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await search.json();
+  if (data.files?.length > 0) return data.files[0].id;
+  const create = await fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: BATIA_FOLDER, mimeType: "application/vnd.google-apps.folder" })
+  });
+  const folder = await create.json();
+  return folder.id;
+}
+
+// List JSON files in BATIA-App folder
+async function listDriveFiles(token, folderId) {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType='application/json'+and+trashed=false&fields=files(id,name,modifiedTime)`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await res.json();
+  return data.files || [];
+}
+
+// Read a file from Drive
+async function readDriveFile(token, fileId) {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return await res.json();
+}
+
+// Save/update a file in Drive
+async function saveDriveFile(token, folderId, fileName, content, existingFileId) {
+  const body = JSON.stringify(content);
+  if (existingFileId) {
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=media`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body
+    });
+    return existingFileId;
+  } else {
+    const meta = await fetch("https://www.googleapis.com/drive/v3/files", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: fileName, parents: [folderId], mimeType: "application/json" })
+    });
+    const file = await meta.json();
+    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${file.id}?uploadType=media`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body
+    });
+    return file.id;
+  }
+}
+
+// Delete a file from Drive
+async function deleteDriveFile(token, fileId) {
+  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
 // ─── STORAGE ─────────────────────────────────────────────────────────────────
 function loadProjets() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]"); }
@@ -206,7 +293,8 @@ function RiskBadge({ risk }) {
 }
 
 // ─── ÉCRAN LISTE PROJETS ──────────────────────────────────────────────────────
-function EcranProjets({ projets, onOpen, onCreate, onDelete, onImport, isMobile }) {
+function EcranProjets({ projets, onOpen, onCreate, onDelete, onImport, isMobile, driveToken, driveUser, onDriveLogin, onDriveLogout, driveLoading, driveFolderId, onDriveSync }) {
+
   const handleImport = () => {
     const input = document.createElement("input");
     input.type = "file"; input.accept = ".json";
@@ -237,11 +325,30 @@ function EcranProjets({ projets, onOpen, onCreate, onDelete, onImport, isMobile 
             <span style={{ background:C.gold, color:C.dark, fontWeight:800, fontSize:12, padding:"4px 12px", borderRadius:4, letterSpacing:2 }}>BATIA</span>
             <span style={{ color:"#fff", fontFamily:"'Playfair Display', serif", fontSize:16, fontWeight:700 }}>Mes dossiers</span>
           </div>
-          <button onClick={handleImport} style={{ background:"rgba(255,255,255,0.1)", border:"none", color:"#ccc", cursor:"pointer", borderRadius:6, padding:"6px 12px", fontSize:12, fontFamily:"inherit" }}>
-            📂 Importer
-          </button>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            {!driveToken ? (
+              <button onClick={onDriveLogin} disabled={driveLoading} style={{ background:C.gold, border:"none", color:C.dark, cursor:"pointer", borderRadius:6, padding:"6px 12px", fontSize:12, fontWeight:700, fontFamily:"inherit", display:"flex", alignItems:"center", gap:6 }}>
+                {driveLoading ? "⏳" : "🔗"} {driveLoading ? "Connexion..." : "Connexion Google Drive"}
+              </button>
+            ) : (
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:11, color:"#aaa" }}>{driveUser}</span>
+                {driveFolderId && <button onClick={onDriveSync} style={{ background:"rgba(255,255,255,0.1)", border:"none", color:"#ccc", cursor:"pointer", borderRadius:6, padding:"5px 10px", fontSize:12, fontFamily:"inherit" }}>🔄 Sync</button>}
+                <button onClick={onDriveLogout} style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", color:"#888", cursor:"pointer", borderRadius:6, padding:"5px 8px", fontSize:11, fontFamily:"inherit" }}>Déconnexion</button>
+              </div>
+            )}
+            {!driveToken && <button onClick={handleImport} style={{ background:"rgba(255,255,255,0.1)", border:"none", color:"#ccc", cursor:"pointer", borderRadius:6, padding:"6px 12px", fontSize:12, fontFamily:"inherit" }}>📂 Importer</button>}
+          </div>
         </div>
       </div>
+
+      {/* Bandeau Drive connecté */}
+      {driveToken && (
+        <div style={{ background:"#1b5e20", padding:"8px 32px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <span style={{ fontSize:12, color:"#a5d6a7" }}>✅ Google Drive connecté — dossier <strong style={{color:"#fff"}}>BATIA-App</strong> synchronisé</span>
+          <button onClick={handleImport} style={{ background:"rgba(255,255,255,0.1)", border:"none", color:"#ccc", cursor:"pointer", borderRadius:6, padding:"4px 10px", fontSize:11, fontFamily:"inherit" }}>📂 Importer fichier local</button>
+        </div>
+      )}
 
       <div style={{ maxWidth:980, margin:"0 auto", padding:isMobile?"16px 14px":"28px 32px" }}>
 
@@ -259,7 +366,7 @@ function EcranProjets({ projets, onOpen, onCreate, onDelete, onImport, isMobile 
           <div style={{ textAlign:"center", padding:"60px 20px", color:C.muted }}>
             <div style={{ fontSize:48, marginBottom:16 }}>🏢</div>
             <div style={{ fontSize:16, fontWeight:600, marginBottom:8 }}>Aucun dossier</div>
-            <div style={{ fontSize:14 }}>Crée ton premier dossier ou importe un fichier JSON existant</div>
+            <div style={{ fontSize:14 }}>{driveToken ? "Aucun dossier trouvé dans Drive — crée ton premier dossier" : "Connecte Google Drive ou crée un dossier"}</div>
           </div>
         ) : (
           projets.slice().reverse().map(p => {
@@ -288,7 +395,10 @@ function EcranProjets({ projets, onOpen, onCreate, onDelete, onImport, isMobile 
                         {p.ident.statut}
                       </span>
                     )}
-                    <span style={{ fontSize:11, color:C.muted }}>{updatedAt}</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      {p.driveFileId && <span style={{ fontSize:10, color:"#4caf50" }}>☁️</span>}
+                      <span style={{ fontSize:11, color:C.muted }}>{updatedAt}</span>
+                    </div>
                     <button onClick={e=>{ e.stopPropagation(); if(window.confirm(`Supprimer "${p.ident?.nom||"ce dossier"}" ?`)) onDelete(p.id); }} style={{ background:"transparent", border:"none", color:"#ccc", cursor:"pointer", fontSize:16, padding:"2px 4px" }}>🗑</button>
                   </div>
                 </div>
@@ -811,71 +921,152 @@ const TABS = [
 
 export default function App() {
   const isMobile = useIsMobile();
-  const [projets,    setProjets]   = useState(() => loadProjets());
-  const [projetActif,setProjetActif] = useState(null); // id du projet ouvert
-  const [tab,        setTab]       = useState("ident");
-  const [saved,      setSaved]     = useState(false);
+  const [projets,      setProjets]      = useState(() => loadProjets());
+  const [projetActif,  setProjetActif]  = useState(null);
+  const [tab,          setTab]          = useState("ident");
+  const [saved,        setSaved]        = useState(false);
+  // Drive state
+  const [driveToken,   setDriveToken]   = useState(() => sessionStorage.getItem("batia_drive_token")||null);
+  const [driveUser,    setDriveUser]    = useState(() => sessionStorage.getItem("batia_drive_user")||null);
+  const [driveFolderID,setDriveFolderID]= useState(() => sessionStorage.getItem("batia_drive_folder")||null);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [syncMsg,      setSyncMsg]      = useState("");
 
-  // Projet courant
   const projet = projets.find(p=>p.id===projetActif)||null;
 
-  // Auto-save toutes les 30s si projet ouvert
+  // Auto-save local toutes les 30s
   useEffect(() => {
     if (!projetActif) return;
     const t = setInterval(() => { saveProjets(projets); setSaved(true); setTimeout(()=>setSaved(false),1500); }, 30000);
     return () => clearInterval(t);
   }, [projetActif, projets]);
 
-  // Helpers mise à jour projet
+  // ── GOOGLE DRIVE AUTH ────────────────────────────────────────────────────
+  const handleDriveLogin = async () => {
+    setDriveLoading(true);
+    try {
+      await loadGoogleScript();
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email",
+        callback: async (resp) => {
+          if (resp.error) { setDriveLoading(false); alert("Erreur connexion: "+resp.error); return; }
+          const token = resp.access_token;
+          // Get user email
+          const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", { headers:{ Authorization:`Bearer ${token}` } });
+          const userInfo = await userRes.json();
+          // Get/create folder
+          const folderId = await getOrCreateFolder(token);
+          setDriveToken(token);
+          setDriveUser(userInfo.email);
+          setDriveFolderID(folderId);
+          sessionStorage.setItem("batia_drive_token", token);
+          sessionStorage.setItem("batia_drive_user", userInfo.email);
+          sessionStorage.setItem("batia_drive_folder", folderId);
+          setDriveLoading(false);
+          // Sync immediately after login
+          await syncFromDrive(token, folderId);
+        }
+      });
+      client.requestAccessToken();
+    } catch(e) { setDriveLoading(false); alert("Erreur: "+e.message); }
+  };
+
+  const handleDriveLogout = () => {
+    setDriveToken(null); setDriveUser(null); setDriveFolderID(null);
+    sessionStorage.removeItem("batia_drive_token");
+    sessionStorage.removeItem("batia_drive_user");
+    sessionStorage.removeItem("batia_drive_folder");
+  };
+
+  // ── SYNC DRIVE → LOCAL ───────────────────────────────────────────────────
+  const syncFromDrive = async (token, folderId) => {
+    setSyncMsg("Synchronisation...");
+    try {
+      const files = await listDriveFiles(token||driveToken, folderId||driveFolderID);
+      const driveProjects = await Promise.all(files.map(async f => {
+        const data = await readDriveFile(token||driveToken, f.id);
+        return { ...newProjet(), ...data, driveFileId:f.id, updatedAt:f.modifiedTime||new Date().toISOString() };
+      }));
+      // Merge: Drive wins for existing driveFileId, keep local-only
+      setProjets(prev => {
+        const localOnly = prev.filter(p => !p.driveFileId);
+        return [...localOnly, ...driveProjects];
+      });
+      setSyncMsg(`✅ ${driveProjects.length} dossier(s) synchronisé(s)`);
+      setTimeout(()=>setSyncMsg(""),3000);
+    } catch(e) { setSyncMsg("❌ Erreur sync: "+e.message); setTimeout(()=>setSyncMsg(""),4000); }
+  };
+
+  // ── SAVE TO DRIVE ────────────────────────────────────────────────────────
+  const saveToDrive = async (p) => {
+    if (!driveToken || !driveFolderID) return;
+    try {
+      const { ident, check, lots, etat, synth } = p;
+      const fileName = `BATIA_${(ident?.nom||"dossier").replace(/\s+/g,"_")}.json`;
+      const fileId = await saveDriveFile(driveToken, driveFolderID, fileName, {ident,check,lots,etat,synth}, p.driveFileId||null);
+      // Update driveFileId in local state
+      setProjets(prev => prev.map(lp => lp.id===p.id ? {...lp, driveFileId:fileId} : lp));
+    } catch(e) { console.error("Drive save error:", e); }
+  };
+
+  // ── HELPERS ──────────────────────────────────────────────────────────────
   const updateProjet = (patch) => {
     setProjets(prev => prev.map(p => p.id===projetActif ? { ...p, ...patch, updatedAt:new Date().toISOString() } : p));
   };
-  const saveNow = () => {
+
+  const saveNow = async () => {
     saveProjets(projets);
+    if (driveToken && projet) await saveToDrive({...projet, updatedAt:new Date().toISOString()});
     setSaved(true);
     setTimeout(()=>setSaved(false),1500);
   };
 
-  // Actions liste
   const handleCreate = () => {
     const p = newProjet();
     const updated = [...projets, p];
-    setProjets(updated);
-    saveProjets(updated);
-    setProjetActif(p.id);
-    setTab("ident");
+    setProjets(updated); saveProjets(updated);
+    setProjetActif(p.id); setTab("ident");
   };
   const handleOpen = (id) => { setProjetActif(id); setTab("ident"); };
-  const handleDelete = (id) => {
-    const updated = projets.filter(p=>p.id!==id);
-    setProjets(updated);
-    saveProjets(updated);
+  const handleDelete = async (id) => {
+    const p = projets.find(lp=>lp.id===id);
+    if (p?.driveFileId && driveToken) await deleteDriveFile(driveToken, p.driveFileId).catch(()=>{});
+    const updated = projets.filter(lp=>lp.id!==id);
+    setProjets(updated); saveProjets(updated);
   };
   const handleImport = (data) => {
     const p = { ...newProjet(), ...data, id:Date.now().toString(), updatedAt:new Date().toISOString() };
     const updated = [...projets, p];
-    setProjets(updated);
-    saveProjets(updated);
-    setProjetActif(p.id);
-    setTab("ident");
+    setProjets(updated); saveProjets(updated);
+    setProjetActif(p.id); setTab("ident");
   };
   const handleBack = () => { saveNow(); setProjetActif(null); };
-
   const handleExport = () => {
     if (!projet) return;
     const { ident, check, lots, etat, synth } = projet;
     const blob = new Blob([JSON.stringify({ident,check,lots,etat,synth},null,2)],{type:"application/json"});
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
-    a.href=url;
-    a.download=`BATIA_${(projet.ident?.nom||"dossier").replace(/\s+/g,"_")}_${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    a.href=url; a.download=`BATIA_${(projet.ident?.nom||"dossier").replace(/\s+/g,"_")}_${new Date().toISOString().slice(0,10)}.json`;
+    a.click(); URL.revokeObjectURL(url);
   };
 
   // ── ÉCRAN LISTE ───────────────────────────────────────────────────────────
   if (!projetActif) {
-    return <EcranProjets projets={projets} onOpen={handleOpen} onCreate={handleCreate} onDelete={handleDelete} onImport={handleImport} isMobile={isMobile}/>;
+    return (
+      <div>
+        {syncMsg&&<div style={{position:"fixed",top:0,left:0,right:0,background:"#1b5e20",color:"#fff",textAlign:"center",padding:"8px",fontSize:13,zIndex:999}}>{syncMsg}</div>}
+        <EcranProjets
+          projets={projets} onOpen={handleOpen} onCreate={handleCreate}
+          onDelete={handleDelete} onImport={handleImport} isMobile={isMobile}
+          driveToken={driveToken} driveUser={driveUser} driveLoading={driveLoading}
+          driveFolderId={driveFolderID}
+          onDriveLogin={handleDriveLogin} onDriveLogout={handleDriveLogout}
+          onDriveSync={()=>syncFromDrive()}
+        />
+      </div>
+    );
   }
 
   // ── ÉCRAN DOSSIER ─────────────────────────────────────────────────────────
@@ -906,6 +1097,7 @@ export default function App() {
             <span style={{color:"#fff",fontFamily:"'Playfair Display', serif",fontSize:isMobile?13:15,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
               {ident.nom||"Sans titre"}
             </span>
+            {projet.driveFileId&&<span style={{fontSize:11,color:"#4caf50",flexShrink:0}}>☁️</span>}
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
             {saved&&<span style={{fontSize:11,color:"#4caf50"}}>✓ Sauvegardé</span>}
